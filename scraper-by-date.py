@@ -306,13 +306,9 @@ class FacebookMonthlyScraper:
 
 # --------------------------------------------------
 if __name__ == "__main__":
-    # EMAIL = input("Facebook email: ")
-    # PASSWORD = input("Facebook password: ")
-    # PAGE_URL = input("Facebook page URL: ")
+    EMAIL = input("Facebook email: ")
+    PASSWORD = input("Facebook password: ")
+    PAGE_URL = input("Facebook page URL: ")
        
-    EMAIL = "sajalkuikel99@gmail.com"
-    PASSWORD = "14231821@skLX"
-    PAGE_URL = "https://www.facebook.com/falanolekbhanla"
-
     scraper = FacebookMonthlyScraper(EMAIL, PASSWORD, PAGE_URL)
     scraper.run(start_year=2025, start_month="December")

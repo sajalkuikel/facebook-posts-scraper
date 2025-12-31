@@ -1,9 +1,15 @@
+import pandas as pd
+
+df = pd.read_csv("comments.csv")
+df["row_id"] = df.index
+df.to_csv("comments.csv", index=False)
+
+
 import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
 
-# ---------------- CONFIG ----------------
 DATA_FILE = "comments.csv"
 ANNOTATION_FILE = "annotations.csv"
 
@@ -17,78 +23,64 @@ LABELS = [
     "other"
 ]
 
-# ---------------- LOAD DATA ----------------
-df = pd.read_csv(DATA_FILE)
-
-# ---------------- USER LOGIN ----------------
 st.title("📝 Comment Annotation Tool")
 
-if "annotator" not in st.session_state:
-    st.session_state.annotator = ""
+# -------- Load data --------
+data = pd.read_csv(DATA_FILE)
 
-st.session_state.annotator = st.text_input(
-    "Enter your Annotator ID (e.g., your name)",
-    st.session_state.annotator
-)
+# -------- Login --------
+annotator = st.text_input("Enter Annotator ID")
 
-if not st.session_state.annotator:
+if not annotator:
     st.stop()
 
-# ---------------- SESSION STATE ----------------
-if "index" not in st.session_state:
-    st.session_state.index = 0
+# -------- Load annotations --------
+if os.path.exists(ANNOTATION_FILE):
+    ann = pd.read_csv(ANNOTATION_FILE)
+else:
+    ann = pd.DataFrame(columns=[
+        "row_id", "annotator", "label", "timestamp"
+    ])
 
-# ---------------- CURRENT ROW ----------------
-if st.session_state.index >= len(df):
-    st.success("🎉 All comments annotated. Thank you!")
+# -------- Filter already annotated --------
+done_ids = ann[ann["annotator"] == annotator]["row_id"].tolist()
+remaining = data[~data["row_id"].isin(done_ids)]
+
+# -------- Completion check --------
+if remaining.empty:
+    st.success("🎉 You have completed all assigned annotations!")
     st.stop()
 
-row = df.iloc[st.session_state.index]
+# -------- Pick next row --------
+row = remaining.iloc[0]
 
-# ---------------- DISPLAY COMMENT ----------------
-st.markdown("### 📌 Comment Information")
-
-st.write(f"**Timestamp:** {row['Timestamp']}")
-st.write(f"**Username:** {row['Username']}")
-st.write(f"**Video ID:** {row['VideoID']}")
-st.write(f"**Date:** {row['Date']}")
-
-st.markdown("### 💬 Comment Text")
+# -------- Display --------
+st.markdown("### 💬 Comment")
 st.info(row["Comment"])
 
-# ---------------- LABEL SELECTION ----------------
-label = st.radio(
-    "Select annotation label:",
-    LABELS,
-    horizontal=False
-)
+st.write(f"**Video ID:** {row['VideoID']}")
+st.write(f"**Username:** {row['Username']}")
+st.write(f"**Date:** {row['Date']}")
 
-# ---------------- SAVE FUNCTION ----------------
-def save_annotation():
-    record = {
-        "Timestamp": row["Timestamp"],
-        "Username": row["Username"],
-        "VideoID": row["VideoID"],
-        "Comment": row["Comment"],
-        "Date": row["Date"],
-        "annotator": st.session_state.annotator,
+# -------- Label --------
+label = st.radio("Select label", LABELS)
+
+# -------- Save --------
+if st.button("✅ Submit"):
+    new_row = pd.DataFrame([{
+        "row_id": row["row_id"],
+        "annotator": annotator,
         "label": label,
-        "annotated_at": datetime.now()
-    }
-
-    out_df = pd.DataFrame([record])
+        "timestamp": datetime.now()
+    }])
 
     if os.path.exists(ANNOTATION_FILE):
-        out_df.to_csv(ANNOTATION_FILE, mode="a", header=False, index=False)
+        new_row.to_csv(ANNOTATION_FILE, mode="a", header=False, index=False)
     else:
-        out_df.to_csv(ANNOTATION_FILE, index=False)
+        new_row.to_csv(ANNOTATION_FILE, index=False)
 
-# ---------------- SUBMIT ----------------
-if st.button("✅ Submit & Next"):
-    save_annotation()
-    st.session_state.index += 1
     st.rerun()
 
-# ---------------- PROGRESS ----------------
-st.progress((st.session_state.index + 1) / len(df))
-st.caption(f"Annotated {st.session_state.index + 1} / {len(df)}")
+# -------- Progress --------
+st.progress(len(done_ids) / len(data))
+st.caption(f"Annotated {len(done_ids)} / {len(data)}")

@@ -22,7 +22,9 @@ class FacebookScraper:
         self.page_slug = self._extract_page_slug(page_url)
         self.base_dir = os.path.join("dataset", self.page_slug)
         self.image_dir = os.path.join(self.base_dir, "images")
-        self.output_file = os.path.join(self.base_dir, "facebook_posts.json")
+
+        # 🔥 SWITCH TO JSONL
+        self.output_file = os.path.join(self.base_dir, "facebook_posts.jsonl")
 
         os.makedirs(self.image_dir, exist_ok=True)
 
@@ -34,28 +36,24 @@ class FacebookScraper:
         return path.split("/")[0]
 
     # --------------------------------------------------
-    # RESUME SUPPORT (PER PAGE)
+    # RESUME SUPPORT (FAST, JSONL)
     # --------------------------------------------------
     def _load_existing_urls(self):
+        urls = set()
         if os.path.exists(self.output_file):
             with open(self.output_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            urls = {item["post_url"] for item in data}
+                for line in f:
+                    try:
+                        obj = json.loads(line)
+                        urls.add(obj["post_url"])
+                    except:
+                        continue
             print(f"✓ Resuming {self.page_slug} with {len(urls)} posts")
-            return urls
-        return set()
+        return urls
 
-    def _append_json(self, record):
-        if os.path.exists(self.output_file):
-            with open(self.output_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        else:
-            data = []
-
-        data.append(record)
-
-        with open(self.output_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+    def _append_jsonl(self, record):
+        with open(self.output_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     # --------------------------------------------------
     def human_type(self, element, text):
@@ -88,7 +86,7 @@ class FacebookScraper:
         self.human_type(password_input, self.password)
 
         self.driver.find_element(By.XPATH, "//button[@type='submit']").click()
-        time.sleep(20)
+        time.sleep(20)  # allow 2FA / review
 
         print("✓ Logged in")
 
@@ -169,7 +167,7 @@ class FacebookScraper:
         return posts_data
 
     # --------------------------------------------------
-    def scrape(self, max_posts=10):
+    def scrape(self, max_posts=600):
         no_new_rounds = 0
 
         while len(self.scraped_urls) < max_posts:
@@ -180,7 +178,7 @@ class FacebookScraper:
             else:
                 no_new_rounds = 0
                 for post in posts:
-                    self._append_json(post)
+                    self._append_jsonl(post)
                     print(f"✓ [{self.page_slug}] Saved {len(self.scraped_urls)}")
 
             if no_new_rounds >= 10000:
@@ -190,7 +188,7 @@ class FacebookScraper:
             self.driver.execute_script(
                 f"window.scrollBy(0, {random.randint(900, 1400)});"
             )
-            time.sleep(random.uniform(1.2, 2.2))
+            time.sleep(random.uniform(0.5, 1.2))
 
     # --------------------------------------------------
     def close(self):

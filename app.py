@@ -1,17 +1,11 @@
-import pandas as pd
-
-df = pd.read_csv("comments.csv")
-df["row_id"] = df.index
-df.to_csv("comments.csv", index=False)
-
-
 import streamlit as st
 import pandas as pd
-import os
+import sqlite3
 from datetime import datetime
 
-DATA_FILE = "comments.csv"
-ANNOTATION_FILE = "annotations.csv"
+# ---------------- CONFIG ----------------
+DATA_URL = "https://raw.githubusercontent.com/sajalkuikel/facebook-posts-scraper/refs/heads/main/comments.csv"
+DB_FILE = "annotations.db"
 
 LABELS = [
     "non-hate",
@@ -23,64 +17,83 @@ LABELS = [
     "other"
 ]
 
+# ---------------- DB INIT ----------------
+@st.cache_resource
+def get_db():
+    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS annotations (
+            row_id INTEGER,
+            annotator TEXT,
+            label TEXT,
+            annotated_at TEXT,
+            PRIMARY KEY (row_id, annotator)
+        )
+    """)
+    return conn
+
+conn = get_db()
+
+# ---------------- LOAD DATA ----------------
+@st.cache_data
+def load_data():
+    df = pd.read_csv(DATA_URL)
+    df["row_id"] = df.index
+    return df
+
+data = load_data()
+
+# ---------------- UI ----------------
 st.title("📝 Comment Annotation Tool")
 
-# -------- Load data --------
-data = pd.read_csv(DATA_FILE)
-
-# -------- Login --------
 annotator = st.text_input("Enter Annotator ID")
 
 if not annotator:
     st.stop()
 
-# -------- Load annotations --------
-if os.path.exists(ANNOTATION_FILE):
-    ann = pd.read_csv(ANNOTATION_FILE)
-else:
-    ann = pd.DataFrame(columns=[
-        "row_id", "annotator", "label", "timestamp"
-    ])
+# ---------------- FETCH PROGRESS ----------------
+done_ids = pd.read_sql(
+    "SELECT row_id FROM annotations WHERE annotator = ?",
+    conn,
+    params=(annotator,)
+)["row_id"].tolist()
 
-# -------- Filter already annotated --------
-done_ids = ann[ann["annotator"] == annotator]["row_id"].tolist()
 remaining = data[~data["row_id"].isin(done_ids)]
 
-# -------- Completion check --------
+# ---------------- DONE ----------------
 if remaining.empty:
-    st.success("🎉 You have completed all assigned annotations!")
+    st.success("🎉 You have completed all annotations. Thank you!")
     st.stop()
 
-# -------- Pick next row --------
 row = remaining.iloc[0]
 
-# -------- Display --------
+# ---------------- DISPLAY ----------------
 st.markdown("### 💬 Comment")
 st.info(row["Comment"])
 
-st.write(f"**Video ID:** {row['VideoID']}")
 st.write(f"**Username:** {row['Username']}")
+st.write(f"**Video ID:** {row['VideoID']}")
+st.write(f"**Timestamp:** {row['Timestamp']}")
 st.write(f"**Date:** {row['Date']}")
 
-# -------- Label --------
+# ---------------- LABEL ----------------
 label = st.radio("Select label", LABELS)
 
-# -------- Save --------
-if st.button("✅ Submit"):
-    new_row = pd.DataFrame([{
-        "row_id": row["row_id"],
-        "annotator": annotator,
-        "label": label,
-        "timestamp": datetime.now()
-    }])
-
-    if os.path.exists(ANNOTATION_FILE):
-        new_row.to_csv(ANNOTATION_FILE, mode="a", header=False, index=False)
-    else:
-        new_row.to_csv(ANNOTATION_FILE, index=False)
-
+# ---------------- SUBMIT ----------------
+if st.button("✅ Submit & Next"):
+    conn.execute(
+        "INSERT OR REPLACE INTO annotations VALUES (?, ?, ?, ?)",
+        (
+            int(row["row_id"]),
+            annotator,
+            label,
+            datetime.now().isoformat()
+        )
+    )
+    conn.commit()
     st.rerun()
 
-# -------- Progress --------
-st.progress(len(done_ids) / len(data))
+# ---------------- PROGRESS ----------------
+progress = len(done_ids) / len(data)
+st.progress(progress)
 st.caption(f"Annotated {len(done_ids)} / {len(data)}")

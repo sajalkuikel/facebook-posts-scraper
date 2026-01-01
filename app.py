@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
 from datetime import datetime
+import gspread
+from google.oauth2.service_account import Credentials
 
 # ---------------- CONFIG ----------------
 DATA_URL = "https://raw.githubusercontent.com/sajalkuikel/facebook-posts-scraper/refs/heads/main/comments.csv"
-DB_FILE = "annotations.db"
+SHEET_NAME = "annotation_db"
 
 LABELS = [
     "non-hate",
@@ -17,22 +18,24 @@ LABELS = [
     "other"
 ]
 
-# ---------------- DB INIT ----------------
+# ---------------- GOOGLE SHEETS INIT ----------------
 @st.cache_resource
-def get_db():
-    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS annotations (
-            row_id INTEGER,
-            annotator TEXT,
-            label TEXT,
-            annotated_at TEXT,
-            PRIMARY KEY (row_id, annotator)
-        )
-    """)
-    return conn
+def get_sheet():
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
 
-conn = get_db()
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=scopes
+    )
+
+    gc = gspread.authorize(creds)
+    sheet = gc.open(SHEET_NAME).sheet1
+    return sheet
+
+sheet = get_sheet()
 
 # ---------------- LOAD DATA ----------------
 @st.cache_data
@@ -44,25 +47,31 @@ def load_data():
 data = load_data()
 
 # ---------------- UI ----------------
-st.title("📝 Comment Annotation Tool")
+st.title("📝 Multi-User Annotation Tool")
 
-annotator = st.text_input("Enter Annotator ID")
+annotator = st.text_input("Enter your Annotator ID")
 
 if not annotator:
     st.stop()
 
-# ---------------- FETCH PROGRESS ----------------
-done_ids = pd.read_sql(
-    "SELECT row_id FROM annotations WHERE annotator = ?",
-    conn,
-    params=(annotator,)
-)["row_id"].tolist()
+# ---------------- LOAD ANNOTATIONS ----------------
+records = sheet.get_all_records()
+ann_df = pd.DataFrame(records)
 
-remaining = data[~data["row_id"].isin(done_ids)]
+if ann_df.empty:
+    ann_df = pd.DataFrame(columns=["row_id", "annotator", "label", "timestamp"])
+
+ann_df["row_id"] = ann_df["row_id"].astype(str)
+
+done_ids = ann_df[
+    ann_df["annotator"] == annotator
+]["row_id"].tolist()
+
+remaining = data[~data["row_id"].astype(str).isin(done_ids)]
 
 # ---------------- DONE ----------------
 if remaining.empty:
-    st.success("🎉 You have completed all annotations. Thank you!")
+    st.success("🎉 You have completed all your annotations!")
     st.stop()
 
 row = remaining.iloc[0]
@@ -73,7 +82,6 @@ st.info(row["Comment"])
 
 st.write(f"**Username:** {row['Username']}")
 st.write(f"**Video ID:** {row['VideoID']}")
-st.write(f"**Timestamp:** {row['Timestamp']}")
 st.write(f"**Date:** {row['Date']}")
 
 # ---------------- LABEL ----------------
@@ -81,16 +89,12 @@ label = st.radio("Select label", LABELS)
 
 # ---------------- SUBMIT ----------------
 if st.button("✅ Submit & Next"):
-    conn.execute(
-        "INSERT OR REPLACE INTO annotations VALUES (?, ?, ?, ?)",
-        (
-            int(row["row_id"]),
-            annotator,
-            label,
-            datetime.now().isoformat()
-        )
-    )
-    conn.commit()
+    sheet.append_row([
+        str(row["row_id"]),
+        annotator,
+        label,
+        datetime.now().isoformat()
+    ])
     st.rerun()
 
 # ---------------- PROGRESS ----------------
